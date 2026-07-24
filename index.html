@@ -136,6 +136,31 @@ section.page{padding-top:26px;}
 .filter-chip{padding:7px 13px;border-radius:20px;border:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:12.5px;font-weight:600;}
 .filter-chip.active{border-color:var(--accent);color:var(--accent);background:rgba(79,214,192,.08);}
 
+.filters-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:18px;padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;}
+.filters-bar input[type="text"],.filters-bar select{
+  padding:10px 12px;border-radius:8px;border:1px solid var(--line);background:#0e1119;color:var(--text);
+  font-size:13px;font-family:inherit;
+}
+.filters-bar input[type="text"]{flex:1 1 220px;min-width:180px;}
+.filters-bar select{flex:0 1 auto;}
+.filters-bar input:focus,.filters-bar select:focus{border-color:var(--accent);}
+.filters-bar .f-arrow{color:var(--muted);font-size:14px;}
+
+/* chat */
+.chat-box{max-height:360px;overflow-y:auto;display:flex;flex-direction:column;gap:9px;padding:2px 2px 4px;margin-bottom:14px;}
+.chat-msg{max-width:82%;padding:9px 12px;border-radius:11px;font-size:13.5px;line-height:1.45;background:var(--panel-2);border:1px solid var(--line);align-self:flex-start;}
+.chat-msg.mine{align-self:flex-end;background:rgba(79,214,192,.12);border-color:var(--accent-dim);}
+.chat-msg.curator{border-color:var(--orange);}
+.chat-msg .sender{font-size:11px;color:var(--muted);margin-bottom:3px;font-weight:600;display:flex;gap:6px;align-items:center;}
+.chat-msg.mine .sender{justify-content:flex-end;}
+.chat-msg .txt{overflow-wrap:anywhere;}
+.chat-empty{color:var(--muted);font-size:13px;text-align:center;padding:24px 0;}
+.chat-input-row{display:flex;gap:8px;}
+.chat-input-row input{flex:1;padding:11px 13px;border-radius:8px;border:1px solid var(--line);background:#0e1119;color:var(--text);font-size:14px;font-family:inherit;}
+.chat-input-row input:focus{border-color:var(--accent);}
+.chat-participants{font-size:11.5px;color:var(--muted);margin:-10px 0 14px;}
+.curator-tag-inline{color:var(--orange);font-weight:700;}
+
 /* item-slot cards */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;}
 .slot-card{
@@ -203,6 +228,24 @@ section.page{padding-top:26px;}
 .curator-card .info{flex:1;}
 .curator-card .info .name{font-weight:700;font-size:15px;}
 .curator-card .info .stat{color:var(--muted);font-size:12.5px;margin-top:2px;}
+
+/* how it works */
+.howitworks-steps{display:flex;flex-direction:column;gap:12px;}
+.step-card{display:flex;gap:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;align-items:flex-start;position:relative;overflow:hidden;}
+.step-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent);}
+.step-num{flex:0 0 auto;width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--blue));color:#08110f;font-weight:700;font-family:'Rajdhani',sans-serif;font-size:17px;display:flex;align-items:center;justify-content:center;}
+.step-body{flex:1;min-width:0;}
+.step-title{font-weight:700;font-size:15px;margin-bottom:4px;}
+.step-text{color:var(--muted);font-size:13.5px;line-height:1.55;}
+.step-icon{margin-left:auto;flex:0 0 auto;color:var(--muted);opacity:.5;}
+.step-icon svg{width:22px;height:22px;}
+.howitworks-note{margin-top:26px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;}
+.howitworks-note h3{margin:0 0 12px;font-size:16px;}
+.howitworks-list{margin:0;padding-left:18px;color:var(--muted);font-size:13.5px;line-height:1.85;}
+.howitworks-list li{margin-bottom:2px;}
+.howitworks-list b{color:var(--text);}
+.role-note{display:flex;gap:12px;background:rgba(242,169,59,.08);border:1px solid rgba(242,169,59,.3);border-radius:10px;padding:14px 16px;margin-top:16px;font-size:13px;color:var(--text);line-height:1.55;}
+.role-note b{color:var(--orange);}
 
 /* bottom nav (mobile) */
 #bottomnav{display:none;position:fixed;bottom:0;left:0;right:0;background:rgba(17,19,29,.95);backdrop-filter:blur(10px);border-top:1px solid var(--line);z-index:20;}
@@ -307,6 +350,7 @@ section.page{padding-top:26px;}
     <section class="page hidden" id="pageDeals"></section>
     <section class="page hidden" id="pageProfile"></section>
     <section class="page hidden" id="pageCurators"></section>
+    <section class="page hidden" id="pageHowItWorks"></section>
     <section class="page hidden" id="pageCuratorPanel"></section>
   </div>
 
@@ -347,13 +391,36 @@ function gameName(id){ const g = GAMES.find(g=>g.id===id); return g ? g.name : i
 let DB = { users: [], listings: [], deals: [], reviews: [] };
 let CURRENT = null; // username of logged-in user
 let ACTIVE_TAB = 'market';
-let MARKET_FILTER = 'all';
+let MARKET_SEARCH = '';
+let MARKET_GIVE_GAME = 'all';
+let MARKET_WANT_GAME = 'all';
+let MARKET_SORT = 'new';
+let MARKET_MIN_RATING = 0;
 
 /* ================= SUPABASE DATA LAYER ================= */
 function rowToUser(r){ return { username:r.username, password:r.password, role:r.role, createdAt:new Date(r.created_at).getTime() }; }
 function rowToListing(r){ return { id:r.id, author:r.author, giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want, description:r.description||'', status:r.status, createdAt:new Date(r.created_at).getTime() }; }
 function rowToDeal(r){ return { id:r.id, listingId:r.listing_id, snapshot:{ giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want }, seller:r.seller, buyer:r.buyer, curator:r.curator, message:r.message||'', status:r.status, completedBy:r.completed_by||{}, createdAt:new Date(r.created_at).getTime() }; }
 function rowToReview(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, toUser:r.to_user, rating:r.rating, comment:r.comment||'', createdAt:new Date(r.created_at).getTime() }; }
+function rowToMessage(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, text:r.text, createdAt:new Date(r.created_at).getTime() }; }
+
+async function loadMessages(dealId){
+  if(!sb) return [];
+  try{
+    const { data, error } = await sb.from('messages').select('*').eq('deal_id', dealId).order('created_at', {ascending:true});
+    if(error) throw error;
+    return (data||[]).map(rowToMessage);
+  }catch(e){
+    console.error('loadMessages failed', e);
+    return [];
+  }
+}
+async function insertMessage(message){
+  const { error } = await sb.from('messages').insert({
+    id:message.id, deal_id:message.dealId, from_user:message.fromUser, text:message.text
+  });
+  if(error) throw error;
+}
 
 async function loadAll(){
   if(!sb){
@@ -538,6 +605,7 @@ const NAV_ITEMS = [
   {id:'deals', label:'Мои сделки', icon:'M7 8h10M7 12h10M7 16h6'},
   {id:'profile', label:'Профиль', icon:'M12 12a4 4 0 100-8 4 4 0 000 8zM4 20c0-4 4-6 8-6s8 2 8 6'},
   {id:'curators', label:'Кураторы', icon:'M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z'},
+  {id:'howitworks', label:'Как проходит сделка', icon:'M12 16v-5M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z'},
 ];
 function navItemsForUser(){
   const items = [...NAV_ITEMS];
@@ -566,23 +634,21 @@ function renderNav(){
     mobile.appendChild(b2);
   });
 }
+const PAGE_MAP = { market:'pageMarket', deals:'pageDeals', profile:'pageProfile', curators:'pageCurators', howitworks:'pageHowItWorks', curatorpanel:'pageCuratorPanel' };
 function switchTab(id){
   ACTIVE_TAB = id;
-  ['market','deals','profile','curators','curatorpanel'].forEach(p=>{
-    document.getElementById('page'+capitalize(p==='curatorpanel'?'CuratorPanel':p)).classList.add('hidden');
-  });
-  const map = {market:'pageMarket', deals:'pageDeals', profile:'pageProfile', curators:'pageCurators', curatorpanel:'pageCuratorPanel'};
-  document.getElementById(map[id]).classList.remove('hidden');
+  Object.values(PAGE_MAP).forEach(pid=> document.getElementById(pid).classList.add('hidden'));
+  document.getElementById(PAGE_MAP[id]).classList.remove('hidden');
   renderNav();
   renderActivePage();
 }
-function capitalize(s){ return s.charAt(0).toUpperCase()+s.slice(1); }
 
 function renderActivePage(){
   if(ACTIVE_TAB === 'market') renderMarket();
   else if(ACTIVE_TAB === 'deals') renderDeals();
   else if(ACTIVE_TAB === 'profile') renderProfile(CURRENT);
   else if(ACTIVE_TAB === 'curators') renderCurators();
+  else if(ACTIVE_TAB === 'howitworks') renderHowItWorks();
   else if(ACTIVE_TAB === 'curatorpanel') renderCuratorPanel();
 }
 
@@ -607,28 +673,91 @@ function enterApp(){
 }
 
 /* ================= MODAL HELPERS ================= */
-function openModal(html){
+let CHAT_POLL_TIMER = null;
+function openModal(html, opts){
+  opts = opts || {};
   const root = document.getElementById('modalRoot');
-  root.innerHTML = `<div class="overlay" id="overlayEl"><div class="modal" style="position:relative;">
+  root.innerHTML = `<div class="overlay" id="overlayEl"><div class="modal" style="position:relative;${opts.wide ? 'max-width:560px;' : ''}">
       <button class="btn ghost modal-close" id="modalCloseBtn" style="padding:5px 10px;">✕</button>
       ${html}
     </div></div>`;
   document.getElementById('modalCloseBtn').onclick = closeModal;
   document.getElementById('overlayEl').onclick = (e)=>{ if(e.target.id==='overlayEl') closeModal(); };
 }
-function closeModal(){ document.getElementById('modalRoot').innerHTML = ''; }
+function closeModal(){
+  document.getElementById('modalRoot').innerHTML = '';
+  if(CHAT_POLL_TIMER){ clearInterval(CHAT_POLL_TIMER); CHAT_POLL_TIMER = null; }
+}
 
 /* ================= MARKET ================= */
 function renderMarket(){
   const page = document.getElementById('pageMarket');
-  const filterChips = ['all', ...GAMES.map(g=>g.id)].map(id=>{
-    const label = id==='all' ? 'Все игры' : gameName(id);
-    return `<button class="filter-chip ${MARKET_FILTER===id?'active':''}" data-filter="${id}">${label}</button>`;
-  }).join('');
+  const gameOptions = (selected, placeholder)=>
+    `<option value="all">${placeholder}</option>` +
+    GAMES.map(g=>`<option value="${g.id}" ${selected===g.id?'selected':''}>${g.name}</option>`).join('');
+
+  page.innerHTML = `
+    <div class="page-head">
+      <div><h2>Маркет обмена</h2><div class="sub">Объявления от игроков — в том числе между разными играми</div></div>
+      <button class="btn" id="createListingBtn">+ Новое объявление</button>
+    </div>
+    <div class="filters-bar">
+      <input id="mSearch" class="f-search" type="text" placeholder="Поиск по предмету, игре или автору…" value="${escapeHtml(MARKET_SEARCH)}">
+      <select id="mGiveGame">${gameOptions(MARKET_GIVE_GAME, 'Отдают: любая игра')}</select>
+      <span class="f-arrow">→</span>
+      <select id="mWantGame">${gameOptions(MARKET_WANT_GAME, 'Хотят: любая игра')}</select>
+      <select id="mMinRating">
+        <option value="0" ${MARKET_MIN_RATING===0?'selected':''}>Любой рейтинг автора</option>
+        <option value="3" ${MARKET_MIN_RATING===3?'selected':''}>От ★3 и выше</option>
+        <option value="4" ${MARKET_MIN_RATING===4?'selected':''}>От ★4 и выше</option>
+        <option value="4.5" ${MARKET_MIN_RATING===4.5?'selected':''}>От ★4.5 и выше</option>
+      </select>
+      <select id="mSort">
+        <option value="new" ${MARKET_SORT==='new'?'selected':''}>Сначала новые</option>
+        <option value="rating" ${MARKET_SORT==='rating'?'selected':''}>Сначала высокий рейтинг</option>
+      </select>
+      <button class="btn ghost" id="mReset" style="padding:10px 14px;font-size:12.5px;">Сбросить фильтры</button>
+    </div>
+    <div id="marketGrid"></div>
+  `;
+
+  document.getElementById('createListingBtn').onclick = openCreateListingModal;
+  document.getElementById('mSearch').oninput = (e)=>{ MARKET_SEARCH = e.target.value; renderMarketGrid(); };
+  document.getElementById('mGiveGame').onchange = (e)=>{ MARKET_GIVE_GAME = e.target.value; renderMarketGrid(); };
+  document.getElementById('mWantGame').onchange = (e)=>{ MARKET_WANT_GAME = e.target.value; renderMarketGrid(); };
+  document.getElementById('mMinRating').onchange = (e)=>{ MARKET_MIN_RATING = parseFloat(e.target.value); renderMarketGrid(); };
+  document.getElementById('mSort').onchange = (e)=>{ MARKET_SORT = e.target.value; renderMarketGrid(); };
+  document.getElementById('mReset').onclick = ()=>{
+    MARKET_SEARCH=''; MARKET_GIVE_GAME='all'; MARKET_WANT_GAME='all'; MARKET_SORT='new'; MARKET_MIN_RATING=0;
+    renderMarket();
+  };
+
+  renderMarketGrid();
+}
+
+function renderMarketGrid(){
+  const grid = document.getElementById('marketGrid');
+  if(!grid) return;
 
   let listings = DB.listings.filter(l=>l.status==='open');
-  if(MARKET_FILTER !== 'all') listings = listings.filter(l=>l.giveGame===MARKET_FILTER || l.wantGame===MARKET_FILTER);
-  listings = listings.sort((a,b)=>b.createdAt-a.createdAt);
+  if(MARKET_GIVE_GAME !== 'all') listings = listings.filter(l=>l.giveGame===MARKET_GIVE_GAME);
+  if(MARKET_WANT_GAME !== 'all') listings = listings.filter(l=>l.wantGame===MARKET_WANT_GAME);
+  if(MARKET_MIN_RATING > 0) listings = listings.filter(l=> userRating(l.author).avg >= MARKET_MIN_RATING);
+  const term = MARKET_SEARCH.trim().toLowerCase();
+  if(term){
+    listings = listings.filter(l=>
+      l.give.toLowerCase().includes(term) ||
+      l.want.toLowerCase().includes(term) ||
+      (l.description||'').toLowerCase().includes(term) ||
+      l.author.toLowerCase().includes(term) ||
+      gameName(l.giveGame).toLowerCase().includes(term) ||
+      gameName(l.wantGame).toLowerCase().includes(term)
+    );
+  }
+  listings = listings.slice().sort((a,b)=>{
+    if(MARKET_SORT === 'rating') return (userRating(b.author).avg - userRating(a.author).avg) || (b.createdAt - a.createdAt);
+    return b.createdAt - a.createdAt;
+  });
 
   const cards = listings.map(l=>{
     const r = userRating(l.author);
@@ -654,22 +783,18 @@ function renderMarket(){
     </div>`;
   }).join('');
 
-  page.innerHTML = `
-    <div class="page-head">
-      <div><h2>Маркет обмена</h2><div class="sub">Объявления от игроков — в том числе между разными играми</div></div>
-      <button class="btn" id="createListingBtn">+ Новое объявление</button>
-    </div>
-    <div class="filters">${filterChips}</div>
-    ${cards ? `<div class="grid">${cards}</div>` : `<div class="empty"><div class="big">Пока нет объявлений</div>Будь первым — создай объявление об обмене.</div>`}
-  `;
+  const hasAnyOpen = DB.listings.some(l=>l.status==='open');
+  grid.innerHTML = cards
+    ? `<div class="grid">${cards}</div>`
+    : hasAnyOpen
+      ? `<div class="empty"><div class="big">Ничего не найдено</div>Попробуйте изменить фильтры или запрос поиска.</div>`
+      : `<div class="empty"><div class="big">Пока нет объявлений</div>Будь первым — создай объявление об обмене.</div>`;
 
-  page.querySelectorAll('.filter-chip').forEach(b=> b.onclick = ()=>{ MARKET_FILTER = b.dataset.filter; renderMarket(); });
-  document.getElementById('createListingBtn').onclick = openCreateListingModal;
-  page.querySelectorAll('[data-offer]').forEach(b=> b.onclick = ()=> openOfferModal(b.dataset.offer));
-  page.querySelectorAll('[data-close]').forEach(b=> b.onclick = async ()=>{
+  grid.querySelectorAll('[data-offer]').forEach(b=> b.onclick = ()=> openOfferModal(b.dataset.offer));
+  grid.querySelectorAll('[data-close]').forEach(b=> b.onclick = async ()=>{
     const l = DB.listings.find(x=>x.id===b.dataset.close);
     if(!l) return;
-    try{ await updateListingStatus(l.id, 'closed'); l.status='closed'; renderMarket(); toast('Объявление закрыто.'); }
+    try{ await updateListingStatus(l.id, 'closed'); l.status='closed'; renderMarketGrid(); toast('Объявление закрыто.'); }
     catch(e){ console.error(e); toast('Не удалось закрыть объявление. Попробуйте ещё раз.'); }
   });
 }
@@ -786,6 +911,9 @@ function renderDeals(){
       }
     }
     const otherParty = role==='buyer' ? d.seller : role==='seller' ? d.buyer : `${d.buyer} ↔ ${d.seller}`;
+    const chatButton = (d.status==='active' || d.status==='completed')
+      ? `<button class="btn secondary" data-chat="${d.id}" style="padding:8px 14px;font-size:12.5px;">💬 Чат сделки</button>`
+      : '';
     return `
     <div class="deal-card">
       <div class="deal-top">
@@ -802,7 +930,7 @@ function renderDeals(){
         <div class="trade-box"><div class="lbl">Хочет продавец · ${gameName(d.snapshot.wantGame)}</div><div class="val">${escapeHtml(d.snapshot.want)}</div></div>
       </div>
       ${d.message ? `<div class="desc">Сообщение: ${escapeHtml(d.message)}</div>` : ''}
-      <div class="deal-actions">${actions}</div>
+      <div class="deal-actions">${actions}${chatButton}</div>
     </div>`;
   }).join('');
 
@@ -813,7 +941,7 @@ function renderDeals(){
 
   page.querySelectorAll('[data-accept]').forEach(b=> b.onclick = async ()=>{
     const d = DB.deals.find(x=>x.id===b.dataset.accept);
-    try{ await updateDeal(d.id, {status:'active'}); d.status='active'; toast('Сделка принята!'); renderDeals(); }
+    try{ await updateDeal(d.id, {status:'active'}); d.status='active'; toast('Сделка принята! Теперь доступен чат сделки.'); renderDeals(); }
     catch(e){ console.error(e); toast('Не удалось принять сделку. Попробуйте ещё раз.'); }
   });
   page.querySelectorAll('[data-decline]').forEach(b=> b.onclick = async ()=>{
@@ -833,6 +961,72 @@ function renderDeals(){
     }catch(e){ console.error(e); toast('Не удалось подтвердить завершение. Попробуйте ещё раз.'); }
   });
   page.querySelectorAll('[data-review]').forEach(b=> b.onclick = ()=> openReviewModal(b.dataset.review));
+  page.querySelectorAll('[data-chat]').forEach(b=> b.onclick = ()=> openChatModal(b.dataset.chat));
+}
+
+/* ================= CHAT ================= */
+async function openChatModal(dealId){
+  const d = DB.deals.find(x=>x.id===dealId);
+  if(!d) return;
+  const isParticipant = [d.buyer, d.seller, d.curator].filter(Boolean).some(u=>u.toLowerCase()===CURRENT.toLowerCase());
+  if(!isParticipant) return;
+
+  const participantsLabel = `${d.buyer} и ${d.seller}` + (d.curator ? ` · куратор: <span class="curator-tag-inline">${d.curator}</span>` : '');
+
+  openModal(`
+    <h3>Чат сделки</h3>
+    <div class="chat-participants">Участники: ${participantsLabel}</div>
+    <div class="chat-box" id="chatBox"><div class="chat-empty">Загрузка сообщений…</div></div>
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="Написать сообщение…" maxlength="1000">
+      <button class="btn" id="chatSendBtn" style="padding:11px 18px;">Отправить</button>
+    </div>
+  `, {wide:true});
+
+  async function refresh(preserveScroll){
+    const box = document.getElementById('chatBox');
+    if(!box) return;
+    const wasAtBottom = !preserveScroll || (box.scrollTop + box.clientHeight >= box.scrollHeight - 20);
+    const msgs = await loadMessages(dealId);
+    if(!document.getElementById('chatBox')) return; // modal closed while loading
+    if(!msgs.length){
+      box.innerHTML = `<div class="chat-empty">Пока нет сообщений — начните обсуждение.</div>`;
+      return;
+    }
+    box.innerHTML = msgs.map(m=>{
+      const mine = m.fromUser.toLowerCase() === CURRENT.toLowerCase();
+      const isCurator = d.curator && m.fromUser.toLowerCase() === d.curator.toLowerCase();
+      return `<div class="chat-msg ${mine?'mine':''} ${isCurator?'curator':''}">
+        <div class="sender">${m.fromUser}${isCurator ? ' · куратор' : ''}</div>
+        <div class="txt">${escapeHtml(m.text)}</div>
+      </div>`;
+    }).join('');
+    if(wasAtBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  async function send(){
+    const input = document.getElementById('chatInput');
+    const text = input.value.trim();
+    if(!text) return;
+    input.value = '';
+    input.disabled = true;
+    try{
+      await insertMessage({ id: uid(), dealId: d.id, fromUser: CURRENT, text });
+      await refresh(false);
+    }catch(e){
+      console.error(e);
+      toast('Не удалось отправить сообщение. Попробуйте ещё раз.');
+    }
+    input.disabled = false;
+    input.focus();
+  }
+
+  document.getElementById('chatSendBtn').onclick = send;
+  document.getElementById('chatInput').onkeydown = (e)=>{ if(e.key === 'Enter') send(); };
+
+  await refresh(false);
+  if(CHAT_POLL_TIMER) clearInterval(CHAT_POLL_TIMER);
+  CHAT_POLL_TIMER = setInterval(()=> refresh(true), 3000);
 }
 
 function openReviewModal(dealId){
@@ -941,6 +1135,61 @@ function renderCurators(){
     switchTab('profile');
     renderProfile(b.dataset.view);
   });
+}
+
+/* ================= HOW IT WORKS ================= */
+function renderHowItWorks(){
+  const page = document.getElementById('pageHowItWorks');
+  const steps = [
+    {
+      title:'Договоритесь об обмене',
+      text:'Покупатель предлагает сделку на объявление, продавец принимает её на вкладке «Мои сделки». При создании предложения можно (и для дорогих обменов рекомендуется) выбрать куратора — независимого посредника.'
+    },
+    {
+      title:'Оба игрока передают предметы куратору',
+      text:'После принятия сделки открывается чат, где участвует куратор. Продавец и покупатель по очереди передают куратору предметы, о которых договорились — не напрямую друг другу, а именно куратору.'
+    },
+    {
+      title:'Куратор подтверждает получение',
+      text:'Получив оба предмета, куратор подтверждает это прямо в чате сделки, чтобы обе стороны видели: обмен под контролем и оба предмета на месте.'
+    },
+    {
+      title:'Куратор передаёт предметы игрокам',
+      text:'Куратор одновременно выдаёт предмет продавца — покупателю, а предмет покупателя — продавцу. Так исключается риск, что кто-то получит предмет, а взамен не отдаст свой.'
+    },
+    {
+      title:'Подтверждение и отзывы',
+      text:'Когда оба получили предметы, каждый нажимает «Подтвердить завершение» в сделке. После этого можно оставить отзыв партнёру по сделке и куратору.'
+    },
+  ];
+
+  page.innerHTML = `
+    <div class="page-head"><div><h2>Как проходит сделка</h2><div class="sub">Безопасный обмен через куратора — шаг за шагом</div></div></div>
+    <div class="howitworks-steps">
+      ${steps.map((s,i)=>`
+        <div class="step-card">
+          <div class="step-num">${i+1}</div>
+          <div class="step-body">
+            <div class="step-title">${s.title}</div>
+            <div class="step-text">${s.text}</div>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="role-note">
+      <span>💡</span>
+      <span>Куратор — необязательный, но рекомендуемый шаг для дорогих или рискованных обменов. Без куратора игроки договариваются и передают предметы друг другу напрямую, на свой риск.</span>
+    </div>
+    <div class="howitworks-note">
+      <h3>Важно знать</h3>
+      <ul class="howitworks-list">
+        <li>Все детали передачи предметов обсуждайте в <b>чате сделки</b> — он открывается сразу после принятия предложения.</li>
+        <li>Не передавайте предметы, пока сделка не принята, а если выбран куратор — пока он явно не подтвердил готовность и получение предметов.</li>
+        <li>Куратор виден в чате сделки отдельной отметкой, чтобы не перепутать его с другой стороной обмена.</li>
+        <li>После завершения сделки обязательно оставьте отзыв — это помогает всей площадке оставаться безопасной для остальных.</li>
+        <li>Если куратор не отвечает или ведёт себя подозрительно, отмените сделку и выберите другого куратора для следующей.</li>
+      </ul>
+    </div>
+  `;
 }
 
 /* ================= CURATOR PANEL ================= */
