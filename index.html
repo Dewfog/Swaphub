@@ -236,12 +236,12 @@ section.page{padding-top:26px;}
     <div class="auth-side">
       <div class="logo"><span class="slot"></span> SwapHub</div>
       <h1>Обмен предметами между играми, без риска.</h1>
-      <p>Выкладывай, что отдаёшь и что хочешь получить — от скинов CS2 до аккаунтов в Genshin. Заключай сделки с другими игроками, а куратор подстрахует, если нужно.</p>
+      <p>Выкладывай, что отдаёшь и что хочешь получить — обменивай скины CS2 на валюту GTA Online, предметы Roblox на карты Minecraft и что угодно между любыми играми. Заключай сделки с другими игроками, а куратор подстрахует, если нужно.</p>
       <div class="pill-row">
         <div class="game-pill"><span style="background:#f2a93b"></span>CS2</div>
         <div class="game-pill"><span style="background:#8b5cf6"></span>Dota 2</div>
         <div class="game-pill"><span style="background:#4fd6c0"></span>Fortnite</div>
-        <div class="game-pill"><span style="background:#ec6fae"></span>Genshin</div>
+        <div class="game-pill"><span style="background:#ec6fae"></span>GTA Online</div>
         <div class="game-pill"><span style="background:#5da8f2"></span>Roblox</div>
         <div class="game-pill"><span style="background:#7ec850"></span>Minecraft</div>
       </div>
@@ -318,14 +318,24 @@ section.page{padding-top:26px;}
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 /* ================= CONFIG ================= */
 const CURATOR_CODE = "TRADEHUB-CUR-2026";
+
+// Данные проекта Supabase (Project Settings -> Data API)
+const SUPABASE_URL = "https://vanovnwhvkmwurxkfrfd.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_4tunqGWwFALEHJxs1f_P6g_NqNxVxYb";
+
+const sb = (window.supabase && SUPABASE_ANON_KEY.indexOf('ВСТАВЬТЕ') === -1)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
 const GAMES = [
   {id:'cs2', name:'CS2', color:'#f2a93b'},
   {id:'dota2', name:'Dota 2', color:'#8b5cf6'},
   {id:'fortnite', name:'Fortnite', color:'#4fd6c0'},
-  {id:'genshin', name:'Genshin Impact', color:'#ec6fae'},
+  {id:'gta', name:'GTA Online', color:'#ec6fae'},
   {id:'roblox', name:'Roblox', color:'#5da8f2'},
   {id:'minecraft', name:'Minecraft', color:'#7ec850'},
   {id:'other', name:'Другое', color:'#8a90a6'},
@@ -339,27 +349,91 @@ let CURRENT = null; // username of logged-in user
 let ACTIVE_TAB = 'market';
 let MARKET_FILTER = 'all';
 
-/* ================= STORAGE HELPERS ================= */
-async function loadKey(key, shared, fallback){
-  try{
-    const r = await window.storage.get(key, shared);
-    return r ? JSON.parse(r.value) : fallback;
-  }catch(e){ return fallback; }
-}
-async function saveKey(key, value, shared){
-  try{ await window.storage.set(key, JSON.stringify(value), shared); }
-  catch(e){ console.error('storage set failed', key, e); }
-}
+/* ================= SUPABASE DATA LAYER ================= */
+function rowToUser(r){ return { username:r.username, password:r.password, role:r.role, createdAt:new Date(r.created_at).getTime() }; }
+function rowToListing(r){ return { id:r.id, author:r.author, giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want, description:r.description||'', status:r.status, createdAt:new Date(r.created_at).getTime() }; }
+function rowToDeal(r){ return { id:r.id, listingId:r.listing_id, snapshot:{ giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want }, seller:r.seller, buyer:r.buyer, curator:r.curator, message:r.message||'', status:r.status, completedBy:r.completed_by||{}, createdAt:new Date(r.created_at).getTime() }; }
+function rowToReview(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, toUser:r.to_user, rating:r.rating, comment:r.comment||'', createdAt:new Date(r.created_at).getTime() }; }
+
 async function loadAll(){
-  DB.users = await loadKey('users', true, []);
-  DB.listings = await loadKey('listings', true, []);
-  DB.deals = await loadKey('deals', true, []);
-  DB.reviews = await loadKey('reviews', true, []);
+  if(!sb){
+    toast('Сервер не настроен: не указан anon key Supabase.');
+    return;
+  }
+  try{
+    const [u, l, d, r] = await Promise.all([
+      sb.from('users').select('*'),
+      sb.from('listings').select('*').order('created_at', {ascending:false}),
+      sb.from('deals').select('*').order('created_at', {ascending:false}),
+      sb.from('reviews').select('*').order('created_at', {ascending:false}),
+    ]);
+    if(u.error) throw u.error;
+    if(l.error) throw l.error;
+    if(d.error) throw d.error;
+    if(r.error) throw r.error;
+    DB.users = (u.data||[]).map(rowToUser);
+    DB.listings = (l.data||[]).map(rowToListing);
+    DB.deals = (d.data||[]).map(rowToDeal);
+    DB.reviews = (r.data||[]).map(rowToReview);
+  }catch(e){
+    console.error('Supabase load failed', e);
+    toast('Не удалось загрузить данные с сервера. Проверьте подключение.');
+  }
 }
-async function saveUsers(){ await saveKey('users', DB.users, true); }
-async function saveListings(){ await saveKey('listings', DB.listings, true); }
-async function saveDeals(){ await saveKey('deals', DB.deals, true); }
-async function saveReviews(){ await saveKey('reviews', DB.reviews, true); }
+
+async function insertUser(user){
+  const { error } = await sb.from('users').insert({ username:user.username, password:user.password, role:user.role });
+  if(error) throw error;
+  DB.users.push(user);
+}
+async function insertListing(listing){
+  const { error } = await sb.from('listings').insert({
+    id:listing.id, author:listing.author, give_game:listing.giveGame, want_game:listing.wantGame,
+    give:listing.give, want:listing.want, description:listing.description, status:listing.status
+  });
+  if(error) throw error;
+  DB.listings.unshift(listing);
+}
+async function updateListingStatus(id, status){
+  const { error } = await sb.from('listings').update({ status }).eq('id', id);
+  if(error) throw error;
+}
+async function insertDeal(deal){
+  const { error } = await sb.from('deals').insert({
+    id:deal.id, listing_id:deal.listingId, give_game:deal.snapshot.giveGame, want_game:deal.snapshot.wantGame,
+    give:deal.snapshot.give, want:deal.snapshot.want, seller:deal.seller, buyer:deal.buyer, curator:deal.curator,
+    message:deal.message, status:deal.status, completed_by:deal.completedBy
+  });
+  if(error) throw error;
+  DB.deals.unshift(deal);
+}
+async function updateDeal(id, patch){
+  const dbPatch = {};
+  if('status' in patch) dbPatch.status = patch.status;
+  if('completedBy' in patch) dbPatch.completed_by = patch.completedBy;
+  const { error } = await sb.from('deals').update(dbPatch).eq('id', id);
+  if(error) throw error;
+}
+async function insertReview(review){
+  const { error } = await sb.from('reviews').insert({
+    id:review.id, deal_id:review.dealId, from_user:review.fromUser, to_user:review.toUser,
+    rating:review.rating, comment:review.comment
+  });
+  if(error) throw error;
+  DB.reviews.push(review);
+}
+
+/* ================= SESSION (локально, в браузере) ================= */
+async function setSession(username){
+  CURRENT = username;
+  try{ localStorage.setItem('swaphub:session', username); }catch(e){}
+}
+async function loadSession(){
+  let username = null;
+  try{ username = localStorage.getItem('swaphub:session'); }catch(e){}
+  if(username && findUser(username)){ CURRENT = username; return true; }
+  return false;
+}
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
 
@@ -433,25 +507,21 @@ document.getElementById('registerBtn').onclick = async ()=>{
   if(findUser(username)){ errEl.textContent = 'Этот никнейм уже занят.'; return; }
   if(REG_ROLE === 'curator' && code !== CURATOR_CODE){ errEl.textContent = 'Неверный код куратора.'; return; }
   const newUser = { username, password, role: REG_ROLE, createdAt: Date.now() };
-  DB.users.push(newUser);
-  await saveUsers();
+  try{
+    await insertUser(newUser);
+  }catch(e){
+    console.error('insertUser failed', e);
+    errEl.textContent = (e && e.code === '23505') ? 'Этот никнейм уже занят.' : 'Не удалось создать аккаунт. Проверьте подключение к серверу.';
+    return;
+  }
   await setSession(username);
   toast(REG_ROLE === 'curator' ? 'Аккаунт куратора создан!' : 'Аккаунт создан!');
   enterApp();
 };
 
-async function setSession(username){
-  CURRENT = username;
-  await saveKey('session', {username}, false);
-}
-async function loadSession(){
-  const s = await loadKey('session', false, null);
-  if(s && s.username && findUser(s.username)){ CURRENT = s.username; return true; }
-  return false;
-}
 async function logout(){
   CURRENT = null;
-  await saveKey('session', {username:null}, false);
+  try{ localStorage.removeItem('swaphub:session'); }catch(e){}
   document.getElementById('mainApp').classList.add('hidden');
   document.getElementById('authScreen').classList.remove('hidden');
   document.getElementById('loginUsername').value = '';
@@ -557,22 +627,23 @@ function renderMarket(){
   }).join('');
 
   let listings = DB.listings.filter(l=>l.status==='open');
-  if(MARKET_FILTER !== 'all') listings = listings.filter(l=>l.game===MARKET_FILTER);
+  if(MARKET_FILTER !== 'all') listings = listings.filter(l=>l.giveGame===MARKET_FILTER || l.wantGame===MARKET_FILTER);
   listings = listings.sort((a,b)=>b.createdAt-a.createdAt);
 
   const cards = listings.map(l=>{
     const r = userRating(l.author);
     const mine = l.author.toLowerCase() === CURRENT.toLowerCase();
+    const cross = l.giveGame !== l.wantGame;
     return `
-    <div class="slot-card" style="--rarity:${gameColor(l.game)}">
+    <div class="slot-card" style="--rarity:${gameColor(l.giveGame)}">
       <div class="slot-top">
-        <span class="game-tag">${gameName(l.game)}</span>
+        <span class="game-tag">${gameName(l.giveGame)}${cross ? ` <span style="color:var(--muted)">→</span> <span style="color:${gameColor(l.wantGame)}">${gameName(l.wantGame)}</span>` : ''}</span>
         <span class="who">от <b style="color:var(--text)">${l.author}</b></span>
       </div>
       <div class="trade-line">
-        <div class="trade-box"><div class="lbl">Отдаёт</div><div class="val">${escapeHtml(l.give)}</div></div>
+        <div class="trade-box"><div class="lbl">Отдаёт · ${gameName(l.giveGame)}</div><div class="val">${escapeHtml(l.give)}</div></div>
         <div class="trade-arrow">⇄</div>
-        <div class="trade-box"><div class="lbl">Хочет</div><div class="val">${escapeHtml(l.want)}</div></div>
+        <div class="trade-box"><div class="lbl">Хочет · ${gameName(l.wantGame)}</div><div class="val">${escapeHtml(l.want)}</div></div>
       </div>
       ${l.description ? `<div class="desc">${escapeHtml(l.description)}</div>` : ''}
       <div class="slot-foot">
@@ -585,7 +656,7 @@ function renderMarket(){
 
   page.innerHTML = `
     <div class="page-head">
-      <div><h2>Маркет обмена</h2><div class="sub">Объявления от игроков со всех платформ</div></div>
+      <div><h2>Маркет обмена</h2><div class="sub">Объявления от игроков — в том числе между разными играми</div></div>
       <button class="btn" id="createListingBtn">+ Новое объявление</button>
     </div>
     <div class="filters">${filterChips}</div>
@@ -597,7 +668,9 @@ function renderMarket(){
   page.querySelectorAll('[data-offer]').forEach(b=> b.onclick = ()=> openOfferModal(b.dataset.offer));
   page.querySelectorAll('[data-close]').forEach(b=> b.onclick = async ()=>{
     const l = DB.listings.find(x=>x.id===b.dataset.close);
-    if(l){ l.status='closed'; await saveListings(); renderMarket(); toast('Объявление закрыто.'); }
+    if(!l) return;
+    try{ await updateListingStatus(l.id, 'closed'); l.status='closed'; renderMarket(); toast('Объявление закрыто.'); }
+    catch(e){ console.error(e); toast('Не удалось закрыть объявление. Попробуйте ещё раз.'); }
   });
 }
 
@@ -609,9 +682,11 @@ function openCreateListingModal(){
   const gameOpts = GAMES.map(g=>`<option value="${g.id}">${g.name}</option>`).join('');
   openModal(`
     <h3>Новое объявление</h3>
-    <div class="field"><label>Игра</label><select id="fGame">${gameOpts}</select></div>
+    <div class="hint" style="margin-bottom:14px;">Игры для «отдаю» и «хочу» можно выбрать разные — например, скин CS2 на валюту GTA Online.</div>
+    <div class="field"><label>Игра, из которой отдаёте предмет</label><select id="fGiveGame">${gameOpts}</select></div>
     <div class="field"><label>Что вы отдаёте</label><input id="fGive" placeholder="например, AK-47 | Redline"></div>
-    <div class="field"><label>Что хотите получить</label><input id="fWant" placeholder="например, нож или скины на сумму"></div>
+    <div class="field"><label>Игра, в которой хотите получить предмет</label><select id="fWantGame">${gameOpts}</select></div>
+    <div class="field"><label>Что хотите получить</label><input id="fWant" placeholder="например, деньги GTA Online или доплата"></div>
     <div class="field"><label>Комментарий (необязательно)</label><textarea id="fDesc" rows="3" placeholder="условия обмена, доплата и т.п."></textarea></div>
     <div class="err-msg" id="fErr"></div>
     <div class="modal-actions">
@@ -623,11 +698,13 @@ function openCreateListingModal(){
   document.getElementById('fSubmit').onclick = async ()=>{
     const give = document.getElementById('fGive').value.trim();
     const want = document.getElementById('fWant').value.trim();
-    const game = document.getElementById('fGame').value;
+    const giveGame = document.getElementById('fGiveGame').value;
+    const wantGame = document.getElementById('fWantGame').value;
     const desc = document.getElementById('fDesc').value.trim();
     if(!give || !want){ document.getElementById('fErr').textContent = 'Укажите, что отдаёте и что хотите получить.'; return; }
-    DB.listings.push({ id: uid(), author: CURRENT, game, give, want, description: desc, status:'open', createdAt: Date.now() });
-    await saveListings();
+    const listing = { id: uid(), author: CURRENT, giveGame, wantGame, give, want, description: desc, status:'open', createdAt: Date.now() };
+    try{ await insertListing(listing); }
+    catch(e){ console.error(e); document.getElementById('fErr').textContent = 'Не удалось опубликовать объявление. Попробуйте ещё раз.'; return; }
     closeModal();
     toast('Объявление опубликовано!');
     renderMarket();
@@ -644,7 +721,7 @@ function openOfferModal(listingId){
   }).join('');
   openModal(`
     <h3>Предложить сделку</h3>
-    <div class="desc" style="margin-bottom:16px;">Вы предлагаете обмен с <b style="color:var(--text)">${l.author}</b>: их «${escapeHtml(l.give)}» на ваше «${escapeHtml(l.want)}».</div>
+    <div class="desc" style="margin-bottom:16px;">Вы предлагаете обмен с <b style="color:var(--text)">${l.author}</b>: их «${escapeHtml(l.give)}» (${gameName(l.giveGame)}) на ваше «${escapeHtml(l.want)}» (${gameName(l.wantGame)}).</div>
     <div class="field"><label>Пригласить куратора (необязательно)</label><select id="dCurator">${curatorOpts}</select></div>
     <div class="field"><label>Сообщение продавцу (необязательно)</label><textarea id="dMsg" rows="2" placeholder="уточните детали"></textarea></div>
     <div class="modal-actions">
@@ -656,14 +733,15 @@ function openOfferModal(listingId){
   document.getElementById('dSubmit').onclick = async ()=>{
     const curator = document.getElementById('dCurator').value || null;
     const msg = document.getElementById('dMsg').value.trim();
-    DB.deals.push({
+    const deal = {
       id: uid(), listingId: l.id,
-      snapshot:{ game:l.game, give:l.give, want:l.want },
+      snapshot:{ giveGame:l.giveGame, wantGame:l.wantGame, give:l.give, want:l.want },
       seller: l.author, buyer: CURRENT, curator,
       message: msg, status:'pending',
       completedBy:{}, createdAt: Date.now()
-    });
-    await saveDeals();
+    };
+    try{ await insertDeal(deal); }
+    catch(e){ console.error(e); toast('Не удалось отправить предложение. Попробуйте ещё раз.'); return; }
     closeModal();
     toast('Предложение отправлено!');
     switchTab('deals');
@@ -712,16 +790,16 @@ function renderDeals(){
     <div class="deal-card">
       <div class="deal-top">
         <span class="status-badge status-${d.status}">${statusLabels[d.status]}</span>
-        <span class="game-tag" style="color:${gameColor(d.snapshot.game)}">${gameName(d.snapshot.game)}</span>
+        <span class="game-tag">${gameName(d.snapshot.giveGame)} <span style="color:var(--muted)">→</span> ${gameName(d.snapshot.wantGame)}</span>
       </div>
       <div class="deal-parties">
         <span>Покупатель: <b>${d.buyer}</b></span>·<span>Продавец: <b>${d.seller}</b></span>
         ${d.curator ? `·<span>Куратор: <b>${d.curator}</b></span>` : ''}
       </div>
       <div class="trade-line" style="margin:12px 0 4px;">
-        <div class="trade-box"><div class="lbl">Отдаёт продавец</div><div class="val">${escapeHtml(d.snapshot.give)}</div></div>
+        <div class="trade-box"><div class="lbl">Отдаёт продавец · ${gameName(d.snapshot.giveGame)}</div><div class="val">${escapeHtml(d.snapshot.give)}</div></div>
         <div class="trade-arrow">⇄</div>
-        <div class="trade-box"><div class="lbl">Хочет продавец</div><div class="val">${escapeHtml(d.snapshot.want)}</div></div>
+        <div class="trade-box"><div class="lbl">Хочет продавец · ${gameName(d.snapshot.wantGame)}</div><div class="val">${escapeHtml(d.snapshot.want)}</div></div>
       </div>
       ${d.message ? `<div class="desc">Сообщение: ${escapeHtml(d.message)}</div>` : ''}
       <div class="deal-actions">${actions}</div>
@@ -734,18 +812,25 @@ function renderDeals(){
   `;
 
   page.querySelectorAll('[data-accept]').forEach(b=> b.onclick = async ()=>{
-    const d = DB.deals.find(x=>x.id===b.dataset.accept); d.status='active'; await saveDeals(); toast('Сделка принята!'); renderDeals();
+    const d = DB.deals.find(x=>x.id===b.dataset.accept);
+    try{ await updateDeal(d.id, {status:'active'}); d.status='active'; toast('Сделка принята!'); renderDeals(); }
+    catch(e){ console.error(e); toast('Не удалось принять сделку. Попробуйте ещё раз.'); }
   });
   page.querySelectorAll('[data-decline]').forEach(b=> b.onclick = async ()=>{
-    const d = DB.deals.find(x=>x.id===b.dataset.decline); d.status='cancelled'; await saveDeals(); toast('Сделка отменена.'); renderDeals();
+    const d = DB.deals.find(x=>x.id===b.dataset.decline);
+    try{ await updateDeal(d.id, {status:'cancelled'}); d.status='cancelled'; toast('Сделка отменена.'); renderDeals(); }
+    catch(e){ console.error(e); toast('Не удалось отменить сделку. Попробуйте ещё раз.'); }
   });
   page.querySelectorAll('[data-complete]').forEach(b=> b.onclick = async ()=>{
     const d = DB.deals.find(x=>x.id===b.dataset.complete);
-    d.completedBy[b.dataset.role] = true;
-    if(d.completedBy.buyer && d.completedBy.seller) d.status = 'completed';
-    await saveDeals();
-    toast(d.status==='completed' ? 'Сделка завершена! Оставьте отзыв.' : 'Подтверждено, ждём вторую сторону.');
-    renderDeals();
+    const newCompletedBy = { ...d.completedBy, [b.dataset.role]: true };
+    const newStatus = (newCompletedBy.buyer && newCompletedBy.seller) ? 'completed' : d.status;
+    try{
+      await updateDeal(d.id, { completedBy:newCompletedBy, status:newStatus });
+      d.completedBy = newCompletedBy; d.status = newStatus;
+      toast(d.status==='completed' ? 'Сделка завершена! Оставьте отзыв.' : 'Подтверждено, ждём вторую сторону.');
+      renderDeals();
+    }catch(e){ console.error(e); toast('Не удалось подтвердить завершение. Попробуйте ещё раз.'); }
   });
   page.querySelectorAll('[data-review]').forEach(b=> b.onclick = ()=> openReviewModal(b.dataset.review));
 }
@@ -780,11 +865,12 @@ function openReviewModal(dealId){
     document.getElementById('rSkip').onclick = nextOrClose;
     document.getElementById('rSubmit').onclick = async ()=>{
       if(!rating){ document.getElementById('rErr').textContent = 'Поставьте оценку от 1 до 5 звёзд.'; return; }
-      DB.reviews.push({
+      const review = {
         id: uid(), dealId: d.id, fromUser: CURRENT, toUser: t.username,
         rating, comment: document.getElementById('rComment').value.trim(), createdAt: Date.now()
-      });
-      await saveReviews();
+      };
+      try{ await insertReview(review); }
+      catch(e){ console.error(e); document.getElementById('rErr').textContent = 'Не удалось отправить отзыв. Попробуйте ещё раз.'; return; }
       nextOrClose();
     };
   }
@@ -866,13 +952,13 @@ function renderCuratorPanel(){
     <div class="deal-card">
       <div class="deal-top">
         <span class="status-badge status-${d.status}">${statusLabels[d.status]}</span>
-        <span class="game-tag" style="color:${gameColor(d.snapshot.game)}">${gameName(d.snapshot.game)}</span>
+        <span class="game-tag">${gameName(d.snapshot.giveGame)} <span style="color:var(--muted)">→</span> ${gameName(d.snapshot.wantGame)}</span>
       </div>
       <div class="deal-parties"><span>Покупатель: <b>${d.buyer}</b></span>·<span>Продавец: <b>${d.seller}</b></span></div>
       <div class="trade-line" style="margin:12px 0 4px;">
-        <div class="trade-box"><div class="lbl">Отдаёт</div><div class="val">${escapeHtml(d.snapshot.give)}</div></div>
+        <div class="trade-box"><div class="lbl">Отдаёт · ${gameName(d.snapshot.giveGame)}</div><div class="val">${escapeHtml(d.snapshot.give)}</div></div>
         <div class="trade-arrow">⇄</div>
-        <div class="trade-box"><div class="lbl">Хочет</div><div class="val">${escapeHtml(d.snapshot.want)}</div></div>
+        <div class="trade-box"><div class="lbl">Хочет · ${gameName(d.snapshot.wantGame)}</div><div class="val">${escapeHtml(d.snapshot.want)}</div></div>
       </div>
     </div>`).join('');
   page.innerHTML = `
