@@ -520,10 +520,33 @@ async function loadAll(){
 }
 
 async function registerAuthUser(username, password, role){
+  let authId;
   const { data, error } = await sb.auth.signUp({ email: authEmail(username), password });
-  if(error) throw error;
-  const authId = data.user && data.user.id;
-  if(!authId) throw new Error('Supabase не вернул id нового пользователя. Проверьте, что в настройках Supabase отключено подтверждение email.');
+  if(error){
+    const isAlreadyRegistered = /already registered|already exists|user_already_exists/i.test(error.message||'') || error.code === 'user_already_exists';
+    if(!isAlreadyRegistered) throw error;
+    // Технический аккаунт уже существует — вероятно, остался от прерванной прошлой попытки.
+    // Пробуем войти с этим же паролем, чтобы забрать сессию и всё же создать/забрать профиль.
+    const signInRes = await sb.auth.signInWithPassword({ email: authEmail(username), password });
+    if(signInRes.error){
+      const dupErr = new Error('AUTH_EMAIL_TAKEN');
+      dupErr.code = 'AUTH_EMAIL_TAKEN';
+      throw dupErr;
+    }
+    authId = signInRes.data.user && signInRes.data.user.id;
+  } else {
+    authId = data.user && data.user.id;
+  }
+  if(!authId) throw new Error('Supabase не вернул id пользователя. Проверьте, что в настройках Supabase отключено подтверждение email.');
+
+  // Уже есть профиль на этот auth_id (например, после восстановления сессии выше)?
+  const existingByAuth = await sb.from('users').select('*').eq('auth_id', authId).maybeSingle();
+  if(existingByAuth.data){
+    const user = rowToUser(existingByAuth.data);
+    const idx = DB.users.findIndex(u=>u.username.toLowerCase()===user.username.toLowerCase());
+    if(idx>=0) DB.users[idx] = user; else DB.users.push(user);
+    return user;
+  }
 
   // Пытаемся создать новый профиль с этим ником
   const insertRes = await sb.from('users').insert({ username, role, auth_id: authId }).select().single();
@@ -753,6 +776,7 @@ document.getElementById('registerBtn').onclick = async ()=>{
   }catch(e){
     console.error('register failed', e);
     if(e && e.code === 'USERNAME_TAKEN') errEl.textContent = 'Этот никнейм уже занят.';
+    else if(e && e.code === 'AUTH_EMAIL_TAKEN') errEl.textContent = 'Похоже, с этим ником уже была попытка регистрации с другим паролем. Попробуйте пароль, который вводили в прошлый раз, или удалите старую запись в Supabase (Authentication → Users) и попробуйте снова.';
     else if(e && /already registered|already exists/i.test(e.message||'')) errEl.textContent = 'Этот никнейм уже занят.';
     else if(e && /password/i.test(e.message||'')) errEl.textContent = 'Пароль слишком простой или короткий (нужно от 6 символов).';
     else errEl.textContent = 'Не удалось создать аккаунт. Проверьте подключение к серверу.';
