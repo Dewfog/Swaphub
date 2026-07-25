@@ -383,6 +383,15 @@ const sb = (window.supabase && SUPABASE_ANON_KEY.indexOf('ВСТАВЬТЕ') ===
   ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
+// Supabase Auth требует email — генерируем технический адрес из никнейма
+// (с хэшем на конце, чтобы разные ники не могли случайно совпасть после очистки от спецсимволов).
+function authEmail(username){
+  const base = username.toLowerCase().replace(/[^a-z0-9_.-]/g, '') || 'user';
+  let hash = 0;
+  for(let i=0;i<username.length;i++){ hash = ((hash<<5) - hash + username.charCodeAt(i)) | 0; }
+  return `${base}-${Math.abs(hash).toString(36)}@swaphub.local`;
+}
+
 const GAMES = [
   {id:'cs2', name:'CS2', color:'#f2a93b'},
   {id:'dota2', name:'Dota 2', color:'#8b5cf6'},
@@ -406,7 +415,7 @@ let MARKET_SORT = 'new';
 let MARKET_MIN_RATING = 0;
 
 /* ================= SUPABASE DATA LAYER ================= */
-function rowToUser(r){ return { username:r.username, password:r.password, role:r.role, avatar:r.avatar||null, createdAt:new Date(r.created_at).getTime() }; }
+function rowToUser(r){ return { username:r.username, authId:r.auth_id, role:r.role, avatar:r.avatar||null, createdAt:new Date(r.created_at).getTime() }; }
 function rowToListing(r){ return { id:r.id, author:r.author, giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want, description:r.description||'', status:r.status, createdAt:new Date(r.created_at).getTime() }; }
 function rowToDeal(r){ return { id:r.id, listingId:r.listing_id, snapshot:{ giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want }, seller:r.seller, buyer:r.buyer, curator:r.curator, message:r.message||'', status:r.status, completedBy:r.completed_by||{}, createdAt:new Date(r.created_at).getTime() }; }
 function rowToReview(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, toUser:r.to_user, rating:r.rating, comment:r.comment||'', createdAt:new Date(r.created_at).getTime() }; }
@@ -510,10 +519,41 @@ async function loadAll(){
   }
 }
 
-async function insertUser(user){
-  const { error } = await sb.from('users').insert({ username:user.username, password:user.password, role:user.role });
+async function registerAuthUser(username, password, role){
+  const { data, error } = await sb.auth.signUp({ email: authEmail(username), password });
   if(error) throw error;
-  DB.users.push(user);
+  const authId = data.user && data.user.id;
+  if(!authId) throw new Error('Supabase не вернул id нового пользователя. Проверьте, что в настройках Supabase отключено подтверждение email.');
+
+  // Пытаемся создать новый профиль с этим ником
+  const insertRes = await sb.from('users').insert({ username, role, auth_id: authId }).select().single();
+  if(!insertRes.error){
+    const user = rowToUser(insertRes.data);
+    DB.users.push(user);
+    return user;
+  }
+  if(insertRes.error.code !== '23505') throw insertRes.error;
+
+  // Ник уже занят — если это старый (незаявленный) профиль, разрешаем «забрать» его себе
+  const claimRes = await sb.from('users')
+    .update({ role, auth_id: authId, password: null })
+    .eq('username', username)
+    .is('auth_id', null)
+    .select()
+    .single();
+  if(claimRes.error || !claimRes.data){
+    const takenErr = new Error('USERNAME_TAKEN');
+    takenErr.code = 'USERNAME_TAKEN';
+    throw takenErr;
+  }
+  const user = rowToUser(claimRes.data);
+  const idx = DB.users.findIndex(u=>u.username.toLowerCase()===username.toLowerCase());
+  if(idx>=0) DB.users[idx] = user; else DB.users.push(user);
+  return user;
+}
+async function loginAuthUser(username, password){
+  const { error } = await sb.auth.signInWithPassword({ email: authEmail(username), password });
+  if(error) throw error;
 }
 async function insertListing(listing){
   const { error } = await sb.from('listings').insert({
@@ -552,16 +592,26 @@ async function insertReview(review){
   DB.reviews.push(review);
 }
 
-/* ================= SESSION (локально, в браузере) ================= */
-async function setSession(username){
-  CURRENT = username;
-  try{ localStorage.setItem('swaphub:session', username); }catch(e){}
-}
-async function loadSession(){
-  let username = null;
-  try{ username = localStorage.getItem('swaphub:session'); }catch(e){}
-  if(username && findUser(username)){ CURRENT = username; return true; }
-  return false;
+/* ================= SESSION (настоящая, через Supabase Auth) ================= */
+async function restoreSession(){
+  if(!sb) return false;
+  try{
+    const { data } = await sb.auth.getSession();
+    const session = data && data.session;
+    if(!session) return false;
+    let u = DB.users.find(x=> x.authId === session.user.id);
+    if(!u){
+      const { data: row, error } = await sb.from('users').select('*').eq('auth_id', session.user.id).single();
+      if(error || !row) return false;
+      u = rowToUser(row);
+      DB.users.push(u);
+    }
+    CURRENT = u.username;
+    return true;
+  }catch(e){
+    console.error('restoreSession failed', e);
+    return false;
+  }
 }
 
 function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
@@ -666,15 +716,23 @@ document.getElementById('loginBtn').onclick = async ()=>{
   const errEl = document.getElementById('loginErr');
   errEl.textContent = '';
   if(!username || !password){ errEl.textContent = 'Заполните никнейм и пароль.'; return; }
+  if(!sb){ errEl.textContent = 'Сервер не настроен.'; return; }
   const u = findUser(username);
-  if(!u || u.password !== password){ errEl.textContent = 'Неверный никнейм или пароль.'; return; }
+  if(!u || !u.authId){ errEl.textContent = 'Аккаунт не найден. Если вы регистрировались раньше — зарегистрируйтесь ещё раз с этим ником.'; return; }
   if(u.role !== LOGIN_ROLE){
     errEl.textContent = u.role === 'curator'
       ? 'Этот аккаунт зарегистрирован как куратор. Переключите вкладку на «Я куратор».'
       : 'Этот аккаунт зарегистрирован как игрок. Переключите вкладку на «Я игрок».';
     return;
   }
-  await setSession(u.username);
+  try{
+    await loginAuthUser(username, password);
+  }catch(e){
+    console.error('login failed', e);
+    errEl.textContent = 'Неверный никнейм или пароль.';
+    return;
+  }
+  CURRENT = u.username;
   enterApp();
 };
 
@@ -684,26 +742,30 @@ document.getElementById('registerBtn').onclick = async ()=>{
   const code = document.getElementById('regCuratorCode').value.trim();
   const errEl = document.getElementById('registerErr');
   errEl.textContent = '';
+  if(!sb){ errEl.textContent = 'Сервер не настроен.'; return; }
   if(!username || username.length < 3){ errEl.textContent = 'Никнейм должен быть от 3 символов.'; return; }
-  if(!password || password.length < 4){ errEl.textContent = 'Пароль должен быть от 4 символов.'; return; }
-  if(findUser(username)){ errEl.textContent = 'Этот никнейм уже занят.'; return; }
+  if(!password || password.length < 6){ errEl.textContent = 'Пароль должен быть от 6 символов.'; return; }
+  const existing = findUser(username);
+  if(existing && existing.authId){ errEl.textContent = 'Этот никнейм уже занят.'; return; }
   if(REG_ROLE === 'curator' && code !== CURATOR_CODE){ errEl.textContent = 'Неверный код куратора.'; return; }
-  const newUser = { username, password, role: REG_ROLE, createdAt: Date.now() };
   try{
-    await insertUser(newUser);
+    await registerAuthUser(username, password, REG_ROLE);
   }catch(e){
-    console.error('insertUser failed', e);
-    errEl.textContent = (e && e.code === '23505') ? 'Этот никнейм уже занят.' : 'Не удалось создать аккаунт. Проверьте подключение к серверу.';
+    console.error('register failed', e);
+    if(e && e.code === 'USERNAME_TAKEN') errEl.textContent = 'Этот никнейм уже занят.';
+    else if(e && /already registered|already exists/i.test(e.message||'')) errEl.textContent = 'Этот никнейм уже занят.';
+    else if(e && /password/i.test(e.message||'')) errEl.textContent = 'Пароль слишком простой или короткий (нужно от 6 символов).';
+    else errEl.textContent = 'Не удалось создать аккаунт. Проверьте подключение к серверу.';
     return;
   }
-  await setSession(username);
+  CURRENT = username;
   toast(REG_ROLE === 'curator' ? 'Аккаунт куратора создан!' : 'Аккаунт создан!');
   enterApp();
 };
 
 async function logout(){
+  try{ if(sb) await sb.auth.signOut(); }catch(e){ console.error(e); }
   CURRENT = null;
-  try{ localStorage.removeItem('swaphub:session'); }catch(e){}
   document.getElementById('mainApp').classList.add('hidden');
   document.getElementById('authScreen').classList.remove('hidden');
   document.getElementById('loginUsername').value = '';
@@ -1521,7 +1583,7 @@ function renderCuratorPanel(){
 /* ================= INIT ================= */
 (async function init(){
   await loadAll();
-  const hasSession = await loadSession();
+  const hasSession = await restoreSession();
   if(hasSession){ enterApp(); }
 })();
 </script>
