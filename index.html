@@ -213,6 +213,13 @@ section.page{padding-top:26px;}
 /* profile */
 .profile-hero{display:flex;gap:18px;align-items:center;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin-bottom:22px;flex-wrap:wrap;}
 .profile-hero .avatar{width:58px;height:58px;font-size:22px;border-radius:14px;}
+.avatar-upload-wrap{position:relative;flex:0 0 auto;}
+.avatar-edit-btn{
+  position:absolute;bottom:-4px;right:-4px;width:24px;height:24px;border-radius:50%;
+  background:var(--accent);color:#08110f;display:flex;align-items:center;justify-content:center;
+  font-size:12px;cursor:pointer;border:2px solid var(--panel);
+}
+.avatar-edit-btn:hover{filter:brightness(1.08);}
 .profile-stats{display:flex;gap:22px;margin-left:auto;flex-wrap:wrap;}
 .pstat{text-align:right;}
 .pstat .num{font-size:22px;font-weight:700;font-family:'Rajdhani';}
@@ -351,6 +358,7 @@ section.page{padding-top:26px;}
     <section class="page hidden" id="pageProfile"></section>
     <section class="page hidden" id="pageCurators"></section>
     <section class="page hidden" id="pageHowItWorks"></section>
+    <section class="page hidden" id="pageSupport"></section>
     <section class="page hidden" id="pageCuratorPanel"></section>
   </div>
 
@@ -398,11 +406,13 @@ let MARKET_SORT = 'new';
 let MARKET_MIN_RATING = 0;
 
 /* ================= SUPABASE DATA LAYER ================= */
-function rowToUser(r){ return { username:r.username, password:r.password, role:r.role, createdAt:new Date(r.created_at).getTime() }; }
+function rowToUser(r){ return { username:r.username, password:r.password, role:r.role, avatar:r.avatar||null, createdAt:new Date(r.created_at).getTime() }; }
 function rowToListing(r){ return { id:r.id, author:r.author, giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want, description:r.description||'', status:r.status, createdAt:new Date(r.created_at).getTime() }; }
 function rowToDeal(r){ return { id:r.id, listingId:r.listing_id, snapshot:{ giveGame:r.give_game, wantGame:r.want_game, give:r.give, want:r.want }, seller:r.seller, buyer:r.buyer, curator:r.curator, message:r.message||'', status:r.status, completedBy:r.completed_by||{}, createdAt:new Date(r.created_at).getTime() }; }
 function rowToReview(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, toUser:r.to_user, rating:r.rating, comment:r.comment||'', createdAt:new Date(r.created_at).getTime() }; }
-function rowToMessage(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, text:r.text, createdAt:new Date(r.created_at).getTime() }; }
+function rowToMessage(r){ return { id:r.id, dealId:r.deal_id, fromUser:r.from_user, text:r.text, isPrivate:!!r.is_private, toUser:r.to_user||null, createdAt:new Date(r.created_at).getTime() }; }
+function rowToTicket(r){ return { id:r.id, number:r.ticket_number, createdBy:r.created_by, status:r.status, assignedCurator:r.assigned_curator||null, createdAt:new Date(r.created_at).getTime() }; }
+function rowToSupportMessage(r){ return { id:r.id, ticketId:r.ticket_id, fromUser:r.from_user, text:r.text, createdAt:new Date(r.created_at).getTime() }; }
 
 async function loadMessages(dealId){
   if(!sb) return [];
@@ -417,8 +427,60 @@ async function loadMessages(dealId){
 }
 async function insertMessage(message){
   const { error } = await sb.from('messages').insert({
-    id:message.id, deal_id:message.dealId, from_user:message.fromUser, text:message.text
+    id:message.id, deal_id:message.dealId, from_user:message.fromUser, text:message.text,
+    is_private: !!message.isPrivate, to_user: message.toUser || null
   });
+  if(error) throw error;
+}
+
+async function updateUserAvatar(username, dataUrl){
+  const { error } = await sb.from('users').update({ avatar: dataUrl }).eq('username', username);
+  if(error) throw error;
+  const u = findUser(username);
+  if(u) u.avatar = dataUrl;
+}
+
+/* ---- support tickets ---- */
+async function insertTicket(ticket){
+  const { data, error } = await sb.from('support_tickets').insert({ id:ticket.id, created_by:ticket.createdBy, status:'open' }).select().single();
+  if(error) throw error;
+  return rowToTicket(data);
+}
+async function loadTickets(isCurator){
+  if(!sb) return [];
+  try{
+    let q = sb.from('support_tickets').select('*').order('created_at', {ascending:false});
+    if(!isCurator) q = q.eq('created_by', CURRENT);
+    const { data, error } = await q;
+    if(error) throw error;
+    return (data||[]).map(rowToTicket);
+  }catch(e){ console.error('loadTickets failed', e); return []; }
+}
+async function loadTicket(id){
+  if(!sb) return null;
+  try{
+    const { data, error } = await sb.from('support_tickets').select('*').eq('id', id).single();
+    if(error) throw error;
+    return rowToTicket(data);
+  }catch(e){ console.error('loadTicket failed', e); return null; }
+}
+async function updateTicket(id, patch){
+  const dbPatch = {};
+  if('status' in patch) dbPatch.status = patch.status;
+  if('assignedCurator' in patch) dbPatch.assigned_curator = patch.assignedCurator;
+  const { error } = await sb.from('support_tickets').update(dbPatch).eq('id', id);
+  if(error) throw error;
+}
+async function loadSupportMessages(ticketId){
+  if(!sb) return [];
+  try{
+    const { data, error } = await sb.from('support_messages').select('*').eq('ticket_id', ticketId).order('created_at', {ascending:true});
+    if(error) throw error;
+    return (data||[]).map(rowToSupportMessage);
+  }catch(e){ console.error('loadSupportMessages failed', e); return []; }
+}
+async function insertSupportMessage(msg){
+  const { error } = await sb.from('support_messages').insert({ id:msg.id, ticket_id:msg.ticketId, from_user:msg.fromUser, text:msg.text });
   if(error) throw error;
 }
 
@@ -524,6 +586,59 @@ function starsStr(avg){
   return '★'.repeat(full) + '☆'.repeat(5-full);
 }
 
+/* ================= AVATARS ================= */
+function avatarDivHtml(u, opts){
+  opts = opts || {};
+  const isCurator = u && u.role === 'curator';
+  const cls = `avatar ${isCurator?'curator':''} ${opts.extraClass||''}`.trim();
+  const idAttr = opts.id ? ` id="${opts.id}"` : '';
+  if(u && u.avatar){
+    return `<div${idAttr} class="${cls}" style="background-image:url('${u.avatar}');background-size:cover;background-position:center;"></div>`;
+  }
+  const initials = u ? u.username.slice(0,2).toUpperCase() : '?';
+  return `<div${idAttr} class="${cls}">${initials}</div>`;
+}
+function resizeImageToDataUrl(file, maxW, maxH, quality){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        let { width, height } = img;
+        const scale = Math.min(maxW/width, maxH/height, 1);
+        width = Math.max(1, Math.round(width*scale));
+        height = Math.max(1, Math.round(height*scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = ()=> reject(new Error('Не удалось прочитать изображение.'));
+      img.src = reader.result;
+    };
+    reader.onerror = ()=> reject(new Error('Не удалось прочитать файл.'));
+    reader.readAsDataURL(file);
+  });
+}
+async function handleAvatarUpload(e){
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  if(!file.type.startsWith('image/')){ toast('Выберите файл изображения.'); e.target.value=''; return; }
+  if(file.size > 8*1024*1024){ toast('Файл слишком большой (максимум 8 МБ).'); e.target.value=''; return; }
+  try{
+    const dataUrl = await resizeImageToDataUrl(file, 200, 200, 0.85);
+    await updateUserAvatar(CURRENT, dataUrl);
+    toast('Аватар обновлён!');
+    renderTopUser();
+    if(ACTIVE_TAB === 'profile') renderProfile(CURRENT);
+  }catch(err){
+    console.error(err);
+    toast('Не удалось загрузить аватар. Попробуйте другое изображение.');
+  }
+  e.target.value = '';
+}
+
 /* ================= AUTH SCREEN LOGIC ================= */
 const tabLogin = document.getElementById('tabLogin');
 const tabRegister = document.getElementById('tabRegister');
@@ -606,6 +721,7 @@ const NAV_ITEMS = [
   {id:'profile', label:'Профиль', icon:'M12 12a4 4 0 100-8 4 4 0 000 8zM4 20c0-4 4-6 8-6s8 2 8 6'},
   {id:'curators', label:'Кураторы', icon:'M12 2l3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z'},
   {id:'howitworks', label:'Как проходит сделка', icon:'M12 16v-5M12 8h.01M22 12a10 10 0 11-20 0 10 10 0 0120 0z'},
+  {id:'support', label:'Поддержка', icon:'M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4-.8L3 20l1.3-3.9A7.96 7.96 0 013 12c0-4.418 4.03-8 9-8s9 3.582 9 8z'},
 ];
 function navItemsForUser(){
   const items = [...NAV_ITEMS];
@@ -634,7 +750,7 @@ function renderNav(){
     mobile.appendChild(b2);
   });
 }
-const PAGE_MAP = { market:'pageMarket', deals:'pageDeals', profile:'pageProfile', curators:'pageCurators', howitworks:'pageHowItWorks', curatorpanel:'pageCuratorPanel' };
+const PAGE_MAP = { market:'pageMarket', deals:'pageDeals', profile:'pageProfile', curators:'pageCurators', howitworks:'pageHowItWorks', support:'pageSupport', curatorpanel:'pageCuratorPanel' };
 function switchTab(id){
   ACTIVE_TAB = id;
   Object.values(PAGE_MAP).forEach(pid=> document.getElementById(pid).classList.add('hidden'));
@@ -649,17 +765,16 @@ function renderActivePage(){
   else if(ACTIVE_TAB === 'profile') renderProfile(CURRENT);
   else if(ACTIVE_TAB === 'curators') renderCurators();
   else if(ACTIVE_TAB === 'howitworks') renderHowItWorks();
+  else if(ACTIVE_TAB === 'support') renderSupport();
   else if(ACTIVE_TAB === 'curatorpanel') renderCuratorPanel();
 }
 
 function renderTopUser(){
   const u = findUser(CURRENT);
   if(!u) return;
-  const isCurator = u.role === 'curator';
-  document.getElementById('topAvatar').textContent = u.username.slice(0,2).toUpperCase();
-  document.getElementById('topAvatar').className = 'avatar' + (isCurator ? ' curator':'');
+  document.getElementById('topAvatar').outerHTML = avatarDivHtml(u, {id:'topAvatar'});
   document.getElementById('topName').textContent = u.username;
-  document.getElementById('topRole').textContent = isCurator ? 'Куратор' : 'Игрок';
+  document.getElementById('topRole').textContent = u.role==='curator' ? 'Куратор' : 'Игрок';
 }
 
 /* ================= ENTER APP ================= */
@@ -968,15 +1083,30 @@ function renderDeals(){
 async function openChatModal(dealId){
   const d = DB.deals.find(x=>x.id===dealId);
   if(!d) return;
-  const isParticipant = [d.buyer, d.seller, d.curator].filter(Boolean).some(u=>u.toLowerCase()===CURRENT.toLowerCase());
-  if(!isParticipant) return;
+  const role = d.buyer.toLowerCase()===CURRENT.toLowerCase() ? 'buyer' : d.seller.toLowerCase()===CURRENT.toLowerCase() ? 'seller' : d.curator && d.curator.toLowerCase()===CURRENT.toLowerCase() ? 'curator' : null;
+  if(!role) return;
 
   const participantsLabel = `${d.buyer} и ${d.seller}` + (d.curator ? ` · куратор: <span class="curator-tag-inline">${d.curator}</span>` : '');
+
+  let privacyControl = '';
+  if(d.curator && role === 'curator'){
+    privacyControl = `<div class="field" style="margin-bottom:12px;"><label>Кому отправить</label>
+      <select id="chatTo">
+        <option value="all">Всем участникам сделки</option>
+        <option value="${d.buyer}">Только ${d.buyer} (приватно, ${d.seller} не увидит)</option>
+        <option value="${d.seller}">Только ${d.seller} (приватно, ${d.buyer} не увидит)</option>
+      </select></div>`;
+  } else if(d.curator && (role === 'buyer' || role === 'seller')){
+    privacyControl = `<label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);margin-bottom:12px;">
+      <input type="checkbox" id="chatPrivate" style="width:16px;height:16px;flex:0 0 auto;"> Написать только куратору — второй игрок это не увидит
+    </label>`;
+  }
 
   openModal(`
     <h3>Чат сделки</h3>
     <div class="chat-participants">Участники: ${participantsLabel}</div>
     <div class="chat-box" id="chatBox"><div class="chat-empty">Загрузка сообщений…</div></div>
+    ${privacyControl}
     <div class="chat-input-row">
       <input id="chatInput" type="text" placeholder="Написать сообщение…" maxlength="1000">
       <button class="btn" id="chatSendBtn" style="padding:11px 18px;">Отправить</button>
@@ -987,8 +1117,13 @@ async function openChatModal(dealId){
     const box = document.getElementById('chatBox');
     if(!box) return;
     const wasAtBottom = !preserveScroll || (box.scrollTop + box.clientHeight >= box.scrollHeight - 20);
-    const msgs = await loadMessages(dealId);
+    const allMsgs = await loadMessages(dealId);
     if(!document.getElementById('chatBox')) return; // modal closed while loading
+    const msgs = allMsgs.filter(m=>
+      !m.isPrivate ||
+      m.fromUser.toLowerCase() === CURRENT.toLowerCase() ||
+      (m.toUser && m.toUser.toLowerCase() === CURRENT.toLowerCase())
+    );
     if(!msgs.length){
       box.innerHTML = `<div class="chat-empty">Пока нет сообщений — начните обсуждение.</div>`;
       return;
@@ -996,8 +1131,9 @@ async function openChatModal(dealId){
     box.innerHTML = msgs.map(m=>{
       const mine = m.fromUser.toLowerCase() === CURRENT.toLowerCase();
       const isCurator = d.curator && m.fromUser.toLowerCase() === d.curator.toLowerCase();
+      const privacyTag = m.isPrivate ? ` <span style="color:var(--orange);font-size:10px;">🔒 приватно${m.toUser?' · '+m.toUser:''}</span>` : '';
       return `<div class="chat-msg ${mine?'mine':''} ${isCurator?'curator':''}">
-        <div class="sender">${m.fromUser}${isCurator ? ' · куратор' : ''}</div>
+        <div class="sender">${m.fromUser}${isCurator ? ' · куратор' : ''}${privacyTag}</div>
         <div class="txt">${escapeHtml(m.text)}</div>
       </div>`;
     }).join('');
@@ -1008,10 +1144,15 @@ async function openChatModal(dealId){
     const input = document.getElementById('chatInput');
     const text = input.value.trim();
     if(!text) return;
+    let isPrivate = false, toUser = null;
+    const toSelect = document.getElementById('chatTo');
+    const privateCheckbox = document.getElementById('chatPrivate');
+    if(toSelect && toSelect.value !== 'all'){ isPrivate = true; toUser = toSelect.value; }
+    else if(privateCheckbox && privateCheckbox.checked){ isPrivate = true; toUser = d.curator; }
     input.value = '';
     input.disabled = true;
     try{
-      await insertMessage({ id: uid(), dealId: d.id, fromUser: CURRENT, text });
+      await insertMessage({ id: uid(), dealId: d.id, fromUser: CURRENT, text, isPrivate, toUser });
       await refresh(false);
     }catch(e){
       console.error(e);
@@ -1084,16 +1225,21 @@ function renderProfile(username){
   const r = userRating(username);
   const reviews = DB.reviews.filter(rv=>rv.toUser.toLowerCase()===username.toLowerCase()).sort((a,b)=>b.createdAt-a.createdAt);
   const isCurator = u.role === 'curator';
+  const isOwn = username.toLowerCase() === CURRENT.toLowerCase();
   const myListingsCount = DB.listings.filter(l=>l.author.toLowerCase()===username.toLowerCase()).length;
   const completedDeals = DB.deals.filter(d=> (d.buyer.toLowerCase()===username.toLowerCase()||d.seller.toLowerCase()===username.toLowerCase()) && d.status==='completed').length;
 
   page.innerHTML = `
     <div class="page-head"><div><h2>Профиль</h2><div class="sub">Публичная статистика и отзывы</div></div></div>
     <div class="profile-hero">
-      <div class="avatar ${isCurator?'curator':''}">${u.username.slice(0,2).toUpperCase()}</div>
+      <div class="avatar-upload-wrap">
+        ${avatarDivHtml(u)}
+        ${isOwn ? `<label class="avatar-edit-btn" for="avatarFileInput" title="Изменить аватар">✎</label>` : ''}
+      </div>
       <div>
         <div style="font-size:19px;font-weight:700;">${u.username}</div>
         <div style="color:var(--muted);font-size:13px;">${isCurator?'Куратор':'Игрок'} · на площадке с ${new Date(u.createdAt).toLocaleDateString('ru-RU')}</div>
+        ${isOwn ? `<div class="hint" style="margin-top:4px;">Нажмите на значок ✎ на аватаре, чтобы загрузить своё фото.</div>` : ''}
       </div>
       <div class="profile-stats">
         <div class="pstat"><div class="num">${r.count? r.avg.toFixed(1):'—'}</div><div class="lbl">Рейтинг</div></div>
@@ -1102,6 +1248,7 @@ function renderProfile(username){
         ${!isCurator ? `<div class="pstat"><div class="num">${myListingsCount}</div><div class="lbl">Объявлений</div></div>` : ''}
       </div>
     </div>
+    ${isOwn ? `<input type="file" id="avatarFileInput" accept="image/*" class="hidden">` : ''}
     <h3 style="font-size:16px;margin-bottom:12px;">Отзывы</h3>
     ${reviews.length ? reviews.map(rv=>`
       <div class="review-item">
@@ -1109,6 +1256,9 @@ function renderProfile(username){
         ${rv.comment ? `<div class="txt">${escapeHtml(rv.comment)}</div>` : ''}
       </div>`).join('') : `<div class="empty">Пока нет отзывов.</div>`}
   `;
+  if(isOwn){
+    document.getElementById('avatarFileInput').addEventListener('change', handleAvatarUpload);
+  }
 }
 
 /* ================= CURATORS ================= */
@@ -1119,7 +1269,7 @@ function renderCurators(){
     const r = userRating(c.username);
     return `
     <div class="curator-card">
-      <div class="avatar curator">${c.username.slice(0,2).toUpperCase()}</div>
+      ${avatarDivHtml(c)}
       <div class="info">
         <div class="name">${c.username}</div>
         <div class="stat">${r.count ? `★ ${r.avg.toFixed(1)} · ${r.count} отзывов` : 'Пока нет отзывов'}</div>
@@ -1190,6 +1340,157 @@ function renderHowItWorks(){
       </ul>
     </div>
   `;
+}
+
+/* ================= SUPPORT ================= */
+function renderSupport(){
+  const page = document.getElementById('pageSupport');
+  const u = findUser(CURRENT);
+  const isCurator = u && u.role === 'curator';
+  page.innerHTML = `
+    <div class="page-head">
+      <div><h2>Служба поддержки</h2><div class="sub">${isCurator ? 'Обращения игроков — отвечайте как куратор' : 'Есть проблема со сделкой или сайтом? Напишите нам'}</div></div>
+      ${isCurator ? '' : `<button class="btn" id="newTicketBtn">+ Новое обращение</button>`}
+    </div>
+    <div id="ticketsList" class="empty"><div class="big">Загрузка…</div></div>
+  `;
+  if(!isCurator){
+    document.getElementById('newTicketBtn').onclick = openNewTicketModal;
+  }
+  refreshTicketsList(isCurator);
+}
+
+async function refreshTicketsList(isCurator){
+  const tickets = await loadTickets(isCurator);
+  const container = document.getElementById('ticketsList');
+  if(!container) return; // user navigated away while loading
+  if(!tickets.length){
+    container.outerHTML = `<div class="empty" id="ticketsList"><div class="big">${isCurator?'Обращений пока нет':'У вас пока нет обращений'}</div>${isCurator?'Здесь появятся вопросы от игроков.':'Если возникла проблема — создайте обращение, и куратор вам ответит.'}</div>`;
+    return;
+  }
+  const statusLabel = {open:'Открыто', closed:'Закрыто'};
+  const statusClass = {open:'status-active', closed:'status-completed'};
+  const cards = tickets.map(t=>`
+    <div class="deal-card">
+      <div class="deal-top">
+        <span class="status-badge ${statusClass[t.status]}">${statusLabel[t.status]}</span>
+        <span class="mono" style="color:var(--muted);font-size:12px;">№${t.number}</span>
+      </div>
+      <div class="deal-parties">
+        ${isCurator ? `<span>От игрока: <b>${t.createdBy}</b></span>` : ''}
+        ${t.assignedCurator ? `<span>${isCurator?'·':''} Отвечает: <b>${t.assignedCurator}</b></span>` : (isCurator ? '' : '<span>Пока без ответа куратора</span>')}
+      </div>
+      <div class="deal-actions"><button class="btn secondary" data-open-ticket="${t.id}" style="padding:8px 14px;font-size:12.5px;">Открыть переписку</button></div>
+    </div>
+  `).join('');
+  container.outerHTML = `<div id="ticketsList">${cards}</div>`;
+  document.querySelectorAll('[data-open-ticket]').forEach(b=> b.onclick = ()=> openSupportChatModal(b.dataset.openTicket, isCurator));
+}
+
+function openNewTicketModal(){
+  openModal(`
+    <h3>Новое обращение в поддержку</h3>
+    <div class="field"><label>Опишите проблему</label><textarea id="tMsg" rows="4" placeholder="Расскажите, что случилось…"></textarea></div>
+    <div class="err-msg" id="tErr"></div>
+    <div class="modal-actions">
+      <button class="btn secondary" id="tCancel">Отмена</button>
+      <button class="btn" id="tSubmit">Отправить</button>
+    </div>
+  `);
+  document.getElementById('tCancel').onclick = closeModal;
+  document.getElementById('tSubmit').onclick = async ()=>{
+    const text = document.getElementById('tMsg').value.trim();
+    if(!text){ document.getElementById('tErr').textContent = 'Опишите проблему перед отправкой.'; return; }
+    try{
+      const ticket = await insertTicket({ id: uid(), createdBy: CURRENT });
+      await insertSupportMessage({ id: uid(), ticketId: ticket.id, fromUser: CURRENT, text });
+      closeModal();
+      toast(`Обращение №${ticket.number} создано!`);
+      switchTab('support');
+    }catch(e){
+      console.error(e);
+      document.getElementById('tErr').textContent = 'Не удалось отправить обращение. Попробуйте ещё раз.';
+    }
+  };
+}
+
+async function openSupportChatModal(ticketId, isCurator){
+  const ticket = await loadTicket(ticketId);
+  if(!ticket){ toast('Не удалось загрузить обращение.'); return; }
+  const canClose = isCurator || ticket.createdBy.toLowerCase() === CURRENT.toLowerCase();
+
+  openModal(`
+    <h3>Обращение <span class="mono" style="color:var(--accent)">№${ticket.number}</span></h3>
+    <div class="chat-participants">От игрока: <b style="color:var(--text)">${ticket.createdBy}</b>${ticket.assignedCurator ? ` · отвечает куратор <span class="curator-tag-inline">${ticket.assignedCurator}</span>` : ''} · статус: <b style="color:var(--text)">${ticket.status==='open'?'открыто':'закрыто'}</b></div>
+    <div class="chat-box" id="chatBox"><div class="chat-empty">Загрузка сообщений…</div></div>
+    ${ticket.status === 'open' ? `
+    <div class="chat-input-row">
+      <input id="chatInput" type="text" placeholder="Написать сообщение…" maxlength="1000">
+      <button class="btn" id="chatSendBtn" style="padding:11px 18px;">Отправить</button>
+    </div>` : `<div class="hint">Это обращение закрыто.</div>`}
+    ${canClose && ticket.status === 'open' ? `<button class="btn ghost block" id="closeTicketBtn" style="margin-top:12px;">Закрыть обращение</button>` : ''}
+  `, {wide:true});
+
+  async function refresh(preserveScroll){
+    const box = document.getElementById('chatBox');
+    if(!box) return;
+    const wasAtBottom = !preserveScroll || (box.scrollTop + box.clientHeight >= box.scrollHeight - 20);
+    const msgs = await loadSupportMessages(ticketId);
+    if(!document.getElementById('chatBox')) return;
+    if(!msgs.length){ box.innerHTML = `<div class="chat-empty">Пока нет сообщений.</div>`; return; }
+    box.innerHTML = msgs.map(m=>{
+      const mine = m.fromUser.toLowerCase() === CURRENT.toLowerCase();
+      const sender = findUser(m.fromUser);
+      const isCuratorMsg = sender && sender.role === 'curator';
+      return `<div class="chat-msg ${mine?'mine':''} ${isCuratorMsg?'curator':''}">
+        <div class="sender">${m.fromUser}${isCuratorMsg ? ' · куратор' : ''}</div>
+        <div class="txt">${escapeHtml(m.text)}</div>
+      </div>`;
+    }).join('');
+    if(wasAtBottom) box.scrollTop = box.scrollHeight;
+  }
+
+  async function send(){
+    const input = document.getElementById('chatInput');
+    if(!input) return;
+    const text = input.value.trim();
+    if(!text) return;
+    input.value = '';
+    input.disabled = true;
+    try{
+      await insertSupportMessage({ id: uid(), ticketId: ticket.id, fromUser: CURRENT, text });
+      if(isCurator && !ticket.assignedCurator){
+        await updateTicket(ticket.id, { assignedCurator: CURRENT });
+        ticket.assignedCurator = CURRENT;
+      }
+      await refresh(false);
+    }catch(e){
+      console.error(e);
+      toast('Не удалось отправить сообщение. Попробуйте ещё раз.');
+    }
+    input.disabled = false;
+    input.focus();
+  }
+  const sendBtn = document.getElementById('chatSendBtn');
+  if(sendBtn){
+    sendBtn.onclick = send;
+    document.getElementById('chatInput').onkeydown = (e)=>{ if(e.key === 'Enter') send(); };
+  }
+  const closeBtn = document.getElementById('closeTicketBtn');
+  if(closeBtn){
+    closeBtn.onclick = async ()=>{
+      try{
+        await updateTicket(ticket.id, { status:'closed' });
+        toast('Обращение закрыто.');
+        closeModal();
+        switchTab('support');
+      }catch(e){ console.error(e); toast('Не удалось закрыть обращение.'); }
+    };
+  }
+
+  await refresh(false);
+  if(CHAT_POLL_TIMER) clearInterval(CHAT_POLL_TIMER);
+  CHAT_POLL_TIMER = setInterval(()=> refresh(true), 3000);
 }
 
 /* ================= CURATOR PANEL ================= */
